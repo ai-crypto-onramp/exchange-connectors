@@ -1,5 +1,7 @@
 # Exchange Connectors
 
+![CI](https://github.com/ai-crypto-onramp/exchange-connectors/actions/workflows/ci.yml/badge.svg)
+
 Venue-specific adapters (Binance, Kraken, OTC desks) — order placement, fills, and balances for the crypto on-ramp.
 
 ## Overview / Responsibilities

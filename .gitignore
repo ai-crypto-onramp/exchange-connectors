@@ -3,5 +3,6 @@ bin/
 vendor/
 .env
 *.log
+/exchange-connectors
 coverage.out
 *.testcoverage.out

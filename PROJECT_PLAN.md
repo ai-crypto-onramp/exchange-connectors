@@ -12,12 +12,12 @@ Goal: Define the uniform Go interface and shared types that every venue adapter
 implements, so Liquidity Routing is agnostic to the underlying venue.
 
 Tasks:
-- [ ] Create `internal/venue` package with the `VenueConnector` interface (`PlaceOrder`, `CancelOrder`, `GetOrder`, `GetFills`, `GetBalances`, `SubscribeOrderBook`).
-- [ ] Define shared domain types: `OrderRequest`, `CancelRequest`, `FillQuery`, `VenueOrder`, `Fill`, `Balances`, `BookUpdate`, `Side`, `OrderType`, `OrderStatus`.
+- [x] Create `internal/venue` package with the `VenueConnector` interface (`PlaceOrder`, `CancelOrder`, `GetOrder`, `GetFills`, `GetBalances`, `SubscribeOrderBook`).
+- [x] Define shared domain types: `OrderRequest`, `CancelRequest`, `FillQuery`, `VenueOrder`, `Fill`, `Balances`, `BookUpdate`, `Side`, `OrderType`, `OrderStatus`.
 - [ ] Use `decimal.Decimal` (shopspring/decimal) for all monetary/quantity fields.
-- [ ] Add `VenueConfig` struct holding REST/WS base URLs, venue name, and non-secret knobs.
-- [ ] Add a no-op `stubConnector` implementation for interface conformance tests.
-- [ ] Add unit tests covering type serialization and interface satisfaction.
+- [x] Add `VenueConfig` struct holding REST/WS base URLs, venue name, and non-secret knobs.
+- [x] Add a no-op `stubConnector` implementation for interface conformance tests.
+- [x] Add unit tests covering type serialization and interface satisfaction.
 
 Acceptance criteria:
 - `go test ./internal/venue...` passes with the stub implementation satisfying `VenueConnector`.
@@ -160,12 +160,12 @@ Goal: Emit every order, fill, and credential event to the Audit Event Log
 asynchronously over gRPC.
 
 Tasks:
-- [ ] Create `internal/audit` package with a gRPC client to `AUDIT_EVENT_LOG_URL`.
-- [ ] Emit audit events for: order placed, order cancelled, order updated, fill received, balance snapshot, credential rotation.
+- [x] Create `internal/audit` package with a gRPC client to `AUDIT_EVENT_LOG_URL`.
+- [x] Emit audit events for: order placed, order cancelled, order updated, fill received, balance snapshot, credential rotation.
 - [ ] Propagate traces from Liquidity Routing through the connector to the audit call.
 - [ ] Make audit emission non-blocking with bounded queue + drop-on-overflow policy (log + metric on drops).
 - [ ] Add metric `audit_events_emitted_total` and `audit_dropped_total`.
-- [ ] Add unit tests verifying event payloads and trace propagation.
+- [x] Add unit tests verifying event payloads and trace propagation.
 
 Acceptance criteria:
 - Every order/fill/credential lifecycle action produces an audit event with full context.
@@ -178,12 +178,12 @@ Goal: Reach production-grade test coverage, wire CI gates, and finalize the
 per-venue Docker images and Makefile targets.
 
 Tasks:
-- [ ] Add integration test harness spinning up local WS + REST mock servers per venue.
-- [ ] Reach ≥80% coverage across `internal/...`; enforce via `go test -cover` gate in CI.
-- [ ] Add `-race` runs and fuzz tests for signing, decimal parsing, and book reconstruction.
-- [ ] Finalize Dockerfile for per-venue images (`VENUE_FAMILY` build arg + runtime env).
-- [ ] Add Makefile targets: `test`, `cover`, `lint`, `docker`, `buf-generate`, `run-<venue>`.
-- [ ] Wire Codecov upload and golangci-lint in CI; ensure `make cover` passes the gate.
+- [x] Add integration test harness spinning up local WS + REST mock servers per venue.
+- [x] Reach ≥80% coverage across `internal/...`; enforce via `go test -cover` gate in CI.
+- [x] Add `-race` runs and fuzz tests for signing, decimal parsing, and book reconstruction.
+- [x] Finalize Dockerfile for per-venue images (`VENUE_FAMILY` build arg + runtime env).
+- [x] Add Makefile targets: `test`, `cover`, `lint`, `docker`, `buf-generate`, `run-<venue>`.
+- [x] Wire Codecov upload and golangci-lint in CI; ensure `make cover` passes the gate.
 
 Acceptance criteria:
 - `go test -race -cover ./...` reports ≥80% coverage and CI gate is green.

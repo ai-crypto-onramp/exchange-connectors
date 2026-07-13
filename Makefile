@@ -1,13 +1,13 @@
 .PHONY: build test run lint docker-build docker-run clean
 
 build:
-	go build -o bin/server .
+	go build -o bin/exchange-connectors ./cmd/exchange-connectors
 
 test:
 	go test ./... -race -coverprofile=coverage.out -coverpkg=./...
 
 run:
-	go run .
+	go run ./cmd/exchange-connectors
 
 lint:
 	go vet ./...

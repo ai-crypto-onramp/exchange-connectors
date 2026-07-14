@@ -43,7 +43,6 @@ type Sink interface {
 type InMemorySink struct {
 	mu      sync.Mutex
 	events  []Event
-	onDrop  int
 }
 
 func NewInMemorySink() *InMemorySink {

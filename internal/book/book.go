@@ -26,7 +26,7 @@ func NewBookAggregator(ctx context.Context, conn venue.VenueConnector, pairs []s
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	_, cancel := context.WithCancel(ctx)
 	a := &BookAggregator{
 		latest: make(map[string]TopOfBook),
 		cancel: cancel,

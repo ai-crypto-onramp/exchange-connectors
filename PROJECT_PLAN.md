@@ -174,7 +174,7 @@ Acceptance criteria:
 
 ## Stage 10: Tests, coverage, and Docker
 
-Goal: Reach production-grade test coverage, wire CI gates, and finalize the
+Goal: Reach production-grade tests, wire CI, and finalize the
 per-venue Docker images and Makefile targets.
 
 Tasks:
@@ -183,7 +183,7 @@ Tasks:
 - [x] Add `-race` runs and fuzz tests for signing, decimal parsing, and book reconstruction.
 - [x] Finalize Dockerfile for per-venue images (`VENUE_FAMILY` build arg + runtime env).
 - [x] Add Makefile targets: `test`, `cover`, `lint`, `docker`, `buf-generate`, `run-<venue>`.
-- [x] Wire Codecov upload and golangci-lint in CI; ensure `make cover` passes the gate.
+- [x] Wire Codecov upload and golangci-lint in CI; ensure `make cover` reports coverage.
 
 Acceptance criteria:
 - `go test -race -cover ./...` reports coverage and CI gate is green.

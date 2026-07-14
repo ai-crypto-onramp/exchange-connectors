@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/metrics"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
+	"github.com/segmentio/kafka-go"
 	"github.com/shopspring/decimal"
 )
 
@@ -40,33 +42,89 @@ type Publisher interface {
 	Publish(ctx context.Context, subject string, data []byte) error
 }
 
-type NATSPublisher struct {
-	conn NATSConn
+// KafkaPublisher publishes fill/balance events to a Kafka topic derived from
+// the subject. It implements the Publisher interface.
+type KafkaPublisher struct {
+	writer *kafka.Writer
+	topic  string
 }
 
-type NATSConn interface {
-	Publish(subject string, data []byte) error
-	Close()
+// KafkaConn is the minimal connection surface retained for test doubles
+// that still want to inject a writer-like dependency.
+type KafkaConn interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
 }
 
-func NewNATSPublisher(conn NATSConn) *NATSPublisher {
-	return &NATSPublisher{conn: conn}
-}
-
-func (p *NATSPublisher) Publish(ctx context.Context, subject string, data []byte) error {
-	if p.conn == nil {
-		return errors.New("events: nats not connected")
+// NewKafkaPublisher returns a KafkaPublisher targeting the given brokers and
+// default topic. Events are keyed by the venue_order_id (fills) or venue
+// (balances) so consumers receive per-key ordering.
+func NewKafkaPublisher(brokers []string, topic string) (*KafkaPublisher, error) {
+	if len(brokers) == 0 {
+		return nil, fmt.Errorf("events: no kafka brokers provided")
 	}
-	if err := p.conn.Publish(subject, data); err != nil {
-		return fmt.Errorf("events: publish: %w", err)
+	if topic == "" {
+		topic = "recon"
 	}
-	return nil
+	w := &kafka.Writer{
+		Addr:         kafka.TCP(brokers...),
+		Topic:        topic,
+		Balancer:     &kafka.LeastBytes{},
+		BatchTimeout: 10 * time.Millisecond,
+		RequiredAcks: kafka.RequireAll,
+	}
+	return &KafkaPublisher{writer: w, topic: topic}, nil
+}
+
+// NewKafkaPublisherFromURL parses a "kafka://host:9092[,host2][?topic=t]" URL
+// and returns a KafkaPublisher.
+func NewKafkaPublisherFromURL(url string) (*KafkaPublisher, error) {
+	if !strings.HasPrefix(url, "kafka://") {
+		return nil, fmt.Errorf("events: url must start with kafka://, got %q", url)
+	}
+	rest := strings.TrimPrefix(url, "kafka://")
+	topic := ""
+	if i := strings.Index(rest, "?"); i >= 0 {
+		q := rest[i+1:]
+		rest = rest[:i]
+		for _, kv := range strings.Split(q, "&") {
+			if strings.HasPrefix(kv, "topic=") {
+				topic = strings.TrimPrefix(kv, "topic=")
+			}
+		}
+	}
+	brokers := strings.Split(rest, ",")
+	clean := brokers[:0]
+	for _, b := range brokers {
+		b = strings.TrimSpace(b)
+		if b != "" {
+			clean = append(clean, b)
+		}
+	}
+	return NewKafkaPublisher(clean, topic)
+}
+
+// Publish writes data to Kafka. The subject is advisory; the writer's default
+// topic is used (callers route by subject suffix via consumer groups).
+func (p *KafkaPublisher) Publish(ctx context.Context, subject string, data []byte) error {
+	if p == nil || p.writer == nil {
+		return errors.New("events: kafka not connected")
+	}
+	return p.writer.WriteMessages(ctx, kafka.Message{Value: data})
+}
+
+// Close flushes and closes the underlying writer.
+func (p *KafkaPublisher) Close() error {
+	if p == nil || p.writer == nil {
+		return nil
+	}
+	return p.writer.Close()
 }
 
 type Bus struct {
-	mu        sync.Mutex
-	publisher Publisher
-	subject   string
+	mu         sync.Mutex
+	publisher  Publisher
+	subject    string
 	maxRetries int
 	deadLetter func(FillEvent, error)
 }
@@ -74,7 +132,7 @@ type Bus struct {
 func NewBus(publisher Publisher, subject string) *Bus {
 	return &Bus{
 		publisher:  publisher,
-		subject:     subject,
+		subject:    subject,
 		maxRetries: 3,
 		deadLetter: func(FillEvent, error) {},
 	}

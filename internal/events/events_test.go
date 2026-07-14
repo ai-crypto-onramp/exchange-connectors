@@ -164,9 +164,28 @@ func TestBalanceFromVenue(t *testing.T) {
 	}
 }
 
-func TestNATSPublisherNilConn(t *testing.T) {
-	p := NewNATSPublisher(nil)
+func TestKafkaPublisherNilWriter(t *testing.T) {
+	var p *KafkaPublisher
 	if err := p.Publish(context.Background(), "subj", []byte("x")); err == nil {
-		t.Fatalf("expected error")
+		t.Fatalf("expected error on nil publisher")
+	}
+	p = &KafkaPublisher{}
+	if err := p.Publish(context.Background(), "subj", []byte("x")); err == nil {
+		t.Fatalf("expected error on nil writer")
+	}
+	if err := p.Close(); err != nil {
+		t.Fatalf("close should be no-op on nil writer: %v", err)
+	}
+}
+
+func TestNewKafkaPublisherNoBrokers(t *testing.T) {
+	if _, err := NewKafkaPublisher(nil, ""); err == nil {
+		t.Fatalf("expected error for empty brokers")
+	}
+}
+
+func TestNewKafkaPublisherFromURLBadScheme(t *testing.T) {
+	if _, err := NewKafkaPublisherFromURL("nats://x:4222"); err == nil {
+		t.Fatalf("expected error for non-kafka scheme")
 	}
 }

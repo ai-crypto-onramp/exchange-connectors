@@ -13,6 +13,7 @@ import (
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/adapters/kraken"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/adapters/otc"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/audit"
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/events"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/server"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
 )
@@ -38,6 +39,19 @@ func main() {
 		log.Fatalf("server: %v", err)
 	}
 
+	// When EVENT_BUS_URL is set (kafka://host:9092), construct a Kafka
+	// publisher for fill/balance events and close it on shutdown. The
+	// publisher is exposed via svc for future wiring into the server.
+	var eventPub *events.KafkaPublisher
+	if busURL := os.Getenv("EVENT_BUS_URL"); busURL != "" {
+		p, err := events.NewKafkaPublisherFromURL(busURL)
+		if err != nil {
+			log.Printf("events: kafka publisher init failed: %v", err)
+		} else {
+			eventPub = p
+		}
+	}
+
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: svc.Routes(),
@@ -56,6 +70,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	if eventPub != nil {
+		_ = eventPub.Close()
+	}
 }
 
 func selectConnector(name string) venue.VenueConnector {

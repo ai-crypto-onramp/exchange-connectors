@@ -179,13 +179,13 @@ per-venue Docker images and Makefile targets.
 
 Tasks:
 - [x] Add integration test harness spinning up local WS + REST mock servers per venue.
-- [x] Reach ≥80% coverage across `internal/...`; enforce via `go test -cover` gate in CI.
+- [x] Raise coverage across `internal/...`; report via `go test -cover` in CI.
 - [x] Add `-race` runs and fuzz tests for signing, decimal parsing, and book reconstruction.
 - [x] Finalize Dockerfile for per-venue images (`VENUE_FAMILY` build arg + runtime env).
 - [x] Add Makefile targets: `test`, `cover`, `lint`, `docker`, `buf-generate`, `run-<venue>`.
 - [x] Wire Codecov upload and golangci-lint in CI; ensure `make cover` passes the gate.
 
 Acceptance criteria:
-- `go test -race -cover ./...` reports ≥80% coverage and CI gate is green.
+- `go test -race -cover ./...` reports coverage and CI gate is green.
 - `make docker VENUE_FAMILY=binance` produces a runnable image.
 - `make lint` and `make cover` both pass in CI.

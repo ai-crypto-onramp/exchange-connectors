@@ -200,7 +200,7 @@ Environment variables (non-secret values; secrets come from the vault):
 | `VAULT_ADDR` | `http://localhost:8200` | Secrets vault address |
 | `VAULT_ROLE` | `exchange-connectors` | Vault auth role |
 | `AUDIT_EVENT_LOG_URL` | — | gRPC address of audit-event-log |
-| `RECON_EVENT_BUS` | `nats://localhost:4222` | Event bus for fills/balances |
+| `EVENT_BUS_URL` | `kafka://localhost:9092` | Event bus for fills/balances |
 | `RATE_LIMIT_WEIGHT_BUDGET` | `1200` | Per-venue weight budget (Binance default) |
 | `CIRCUIT_BREAKER_THRESHOLD` | `0.3` | Error-rate to trip the breaker |
 | `WS_RECONNECT_MAX_BACKOFF` | `30s` | Max backoff for WS reconnect |

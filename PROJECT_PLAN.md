@@ -145,7 +145,7 @@ Tasks:
 - [x] Create `internal/events` package with typed `FillEvent` and `BalanceEvent`.
 - [x] Publish fill events on every `GetFills`/WS user-data stream execution; include venue order id, internal order id, price, size, fee, timestamp.
 - [x] Publish balance events on periodic REST poll and WS balance stream (where supported); reconcile against internal ledger expectations.
-- [x] Wire event bus publisher to `RECON_EVENT_BUS` (NATS) with retries + dead-letter.
+- [x] Wire event bus publisher to `EVENT_BUS_URL` (Kafka) with retries + dead-letter.
 - [x] Add Prometheus metrics: `fill_latency_seconds`, `balance_sync_lag_seconds`, `events_published_total`.
 - [ ] Add integration tests with an in-process event bus subscriber.
 

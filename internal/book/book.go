@@ -39,10 +39,12 @@ func (a *BookAggregator) consume(ch <-chan venue.BookUpdate) {
 	for upd := range ch {
 		top := TopOfBook{Pair: upd.Pair, TS: upd.TS}
 		if len(upd.Bids) > 0 {
-			top.Bid = upd.Bids[0].Price
+			f, _ := upd.Bids[0].Price.Float64()
+			top.Bid = f
 		}
 		if len(upd.Asks) > 0 {
-			top.Ask = upd.Asks[0].Price
+			f, _ := upd.Asks[0].Price.Float64()
+			top.Ask = f
 		}
 		a.mu.Lock()
 		a.latest[upd.Pair] = top

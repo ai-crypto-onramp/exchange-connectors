@@ -3,6 +3,8 @@ package venue
 import (
 	"context"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 type Side string
@@ -23,6 +25,7 @@ type OrderStatus string
 
 const (
 	OrderStatusNew      OrderStatus = "new"
+	OrderStatusPartial  OrderStatus = "partial"
 	OrderStatusFilled   OrderStatus = "filled"
 	OrderStatusCanceled OrderStatus = "canceled"
 )
@@ -32,8 +35,8 @@ type OrderRequest struct {
 	Symbol        string
 	Side          Side
 	Type          OrderType
-	Quantity      float64
-	Price         float64
+	Quantity      decimal.Decimal
+	Price         decimal.Decimal
 }
 
 type CancelRequest struct {
@@ -49,20 +52,20 @@ type FillQuery struct {
 }
 
 type OrderResponse struct {
-	VenueOrderID string
+	VenueOrderID  string
 	ClientOrderID string
 	Status        OrderStatus
-	FilledQty     float64
-	AvgPrice      float64
+	FilledQty     decimal.Decimal
+	AvgPrice      decimal.Decimal
 	Fills         []Fill
 }
 
 type Fill struct {
 	VenueOrderID string
 	TradeID      string
-	Price        float64
-	Quantity     float64
-	Fee          float64
+	Price        decimal.Decimal
+	Quantity     decimal.Decimal
+	Fee          decimal.Decimal
 	FeeAsset     string
 	Timestamp    time.Time
 }
@@ -73,32 +76,34 @@ type Balances struct {
 
 type Balance struct {
 	Asset  string
-	Free   float64
-	Locked float64
+	Free   decimal.Decimal
+	Locked decimal.Decimal
 }
 
 type BookLevel struct {
-	Price float64
-	Size  float64
+	Price decimal.Decimal
+	Size  decimal.Decimal
 }
 
 type BookUpdate struct {
-	Pair   string
-	Bids   []BookLevel
-	Asks   []BookLevel
-	TS     time.Time
+	Pair string
+	Bids []BookLevel
+	Asks []BookLevel
+	TS   time.Time
 }
 
 type VenueConnector interface {
 	PlaceOrder(ctx context.Context, req OrderRequest) (*OrderResponse, error)
 	CancelOrder(ctx context.Context, req CancelRequest) error
+	GetOrder(ctx context.Context, venueOrderID string) (*OrderResponse, error)
 	GetFills(ctx context.Context, query FillQuery) ([]Fill, error)
 	GetBalances(ctx context.Context) (*Balances, error)
 	SubscribeBook(ctx context.Context, pairs []string) (<-chan BookUpdate, error)
 }
 
 type VenueConfig struct {
-	Name    string
-	Price   float64
-	Balance map[string]Balance
+	Name     string
+	RESTBase string
+	WSBase   string
+	Knobs    map[string]string
 }

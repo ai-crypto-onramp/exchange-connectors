@@ -11,6 +11,7 @@ import (
 
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/audit"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
+	"github.com/shopspring/decimal"
 )
 
 func newTestService(t *testing.T) (*Service, *venue.DummyVenueConnector, *audit.InMemorySink) {
@@ -83,7 +84,7 @@ func TestAdminStatusNoFill(t *testing.T) {
 func TestAdminStatusWithFill(t *testing.T) {
 	svc, conn, _ := newTestService(t)
 	_, _ = conn.PlaceOrder(context.Background(), venue.OrderRequest{
-		ClientOrderID: "x1", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "x1", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 	rec := httptest.NewRecorder()
@@ -107,7 +108,7 @@ func TestRotateCredentials(t *testing.T) {
 
 func TestPlaceOrderSuccess(t *testing.T) {
 	svc, _, sink := newTestService(t)
-	body := `{"venue":"dummy","pair":"BTCUSDT","side":"buy","type":"market","amount":0.5}`
+	body := `{"venue":"dummy","pair":"BTCUSDT","side":"buy","type":"market","amount":"0.5"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/orders", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 	svc.Routes().ServeHTTP(rec, req)
@@ -121,7 +122,7 @@ func TestPlaceOrderSuccess(t *testing.T) {
 	if resp.Status != "filled" {
 		t.Fatalf("status: %s", resp.Status)
 	}
-	if resp.FilledQty != 0.5 {
+	if !resp.FilledQty.Equal(decimal.NewFromFloat(0.5)) {
 		t.Fatalf("filled qty: %v", resp.FilledQty)
 	}
 	if resp.Venue != "dummy" {
@@ -148,11 +149,12 @@ func TestPlaceOrderInvalidJSON(t *testing.T) {
 func TestPlaceOrderMissingFields(t *testing.T) {
 	svc, _, _ := newTestService(t)
 	cases := []string{
-		`{"pair":"BTCUSDT","side":"buy","type":"market","amount":0.5}`,
-		`{"venue":"dummy","side":"buy","type":"market","amount":0.5}`,
-		`{"venue":"dummy","pair":"BTCUSDT","type":"market","amount":0.5}`,
-		`{"venue":"dummy","pair":"BTCUSDT","side":"buy","amount":0.5}`,
-		`{"venue":"dummy","pair":"BTCUSDT","side":"buy","type":"market","amount":0}`,
+		`{"pair":"BTCUSDT","side":"buy","type":"market","amount":"0.5"}`,
+		`{"venue":"dummy","side":"buy","type":"market","amount":"0.5"}`,
+		`{"venue":"dummy","pair":"BTCUSDT","type":"market","amount":"0.5"}`,
+		`{"venue":"dummy","pair":"BTCUSDT","side":"buy","amount":"0.5"}`,
+		`{"venue":"dummy","pair":"BTCUSDT","side":"buy","type":"market","amount":"0"}`,
+		`{"venue":"dummy","pair":"BTCUSDT","side":"buy","type":"market","amount":"notanum"}`,
 	}
 	for i, b := range cases {
 		req := httptest.NewRequest(http.MethodPost, "/v1/orders", bytes.NewBufferString(b))
@@ -177,7 +179,7 @@ func TestPlaceOrderWrongMethod(t *testing.T) {
 func TestCancelOrder(t *testing.T) {
 	svc, conn, sink := newTestService(t)
 	resp, _ := conn.PlaceOrder(context.Background(), venue.OrderRequest{
-		ClientOrderID: "c1", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c1", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	before := sink.Count()
 	req := httptest.NewRequest(http.MethodPost, "/v1/orders/"+resp.VenueOrderID+"/cancel", nil)
@@ -204,7 +206,7 @@ func TestCancelOrderWrongMethod(t *testing.T) {
 func TestGetFills(t *testing.T) {
 	svc, conn, _ := newTestService(t)
 	resp, _ := conn.PlaceOrder(context.Background(), venue.OrderRequest{
-		ClientOrderID: "c2", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c2", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/orders/"+resp.VenueOrderID+"/fills", nil)
 	rec := httptest.NewRecorder()
@@ -230,7 +232,7 @@ func TestGetFills(t *testing.T) {
 func TestGetFillsWithLimit(t *testing.T) {
 	svc, conn, _ := newTestService(t)
 	resp, _ := conn.PlaceOrder(context.Background(), venue.OrderRequest{
-		ClientOrderID: "c3", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c3", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/orders/"+resp.VenueOrderID+"/fills?limit=5", nil)
 	rec := httptest.NewRecorder()
@@ -247,6 +249,26 @@ func TestGetFillsWrongMethod(t *testing.T) {
 	svc.Routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestGetOrderStatus(t *testing.T) {
+	svc, conn, _ := newTestService(t)
+	resp, _ := conn.PlaceOrder(context.Background(), venue.OrderRequest{
+		ClientOrderID: "cx", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: decimal.NewFromInt(1),
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/orders/"+resp.VenueOrderID+"/status", nil)
+	rec := httptest.NewRecorder()
+	svc.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var o venue.OrderResponse
+	if err := json.NewDecoder(rec.Body).Decode(&o); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if o.VenueOrderID != resp.VenueOrderID {
+		t.Fatalf("order id: %s", o.VenueOrderID)
 	}
 }
 
@@ -282,7 +304,7 @@ func TestBalances(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&b); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if b.Assets["BTC"].Free != 1.5 {
+	if !b.Assets["BTC"].Free.Equal(decimal.NewFromFloat(1.5)) {
 		t.Fatalf("btc free: %v", b.Assets["BTC"].Free)
 	}
 }
@@ -354,8 +376,8 @@ func TestBookSuccessAfterWait(t *testing.T) {
 
 func TestSplitOrderPath(t *testing.T) {
 	cases := []struct {
-		path   string
-		wantID string
+		path    string
+		wantID  string
 		wantSub string
 	}{
 		{"/v1/orders/abc/cancel", "abc", "cancel"},
@@ -387,8 +409,7 @@ func TestIntegrationServerPlaceCancelFills(t *testing.T) {
 	srv := httptest.NewServer(svc.Routes())
 	defer srv.Close()
 
-	// Place an order via HTTP
-	body := `{"venue":"dummy","pair":"BTCUSDT","side":"buy","type":"market","amount":0.25}`
+	body := `{"venue":"dummy","pair":"BTCUSDT","side":"buy","type":"market","amount":"0.25"}`
 	resp, err := http.Post(srv.URL+"/v1/orders", "application/json", bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatalf("post: %v", err)
@@ -403,7 +424,6 @@ func TestIntegrationServerPlaceCancelFills(t *testing.T) {
 		t.Fatalf("empty venue order id")
 	}
 
-	// Cancel it
 	cancelResp, err := http.Post(srv.URL+"/v1/orders/"+or.VenueOrderID+"/cancel", "application/json", nil)
 	if err != nil {
 		t.Fatalf("cancel: %v", err)
@@ -413,7 +433,6 @@ func TestIntegrationServerPlaceCancelFills(t *testing.T) {
 		t.Fatalf("expected 200 cancel, got %d", cancelResp.StatusCode)
 	}
 
-	// Get fills
 	getResp, err := http.Get(srv.URL + "/v1/orders/" + or.VenueOrderID + "/fills")
 	if err != nil {
 		t.Fatalf("get fills: %v", err)
@@ -423,7 +442,6 @@ func TestIntegrationServerPlaceCancelFills(t *testing.T) {
 		t.Fatalf("expected 200 fills, got %d", getResp.StatusCode)
 	}
 
-	// Get balances
 	balResp, err := http.Get(srv.URL + "/v1/balances")
 	if err != nil {
 		t.Fatalf("get balances: %v", err)
@@ -433,7 +451,6 @@ func TestIntegrationServerPlaceCancelFills(t *testing.T) {
 		t.Fatalf("expected 200 balances, got %d", balResp.StatusCode)
 	}
 
-	// Healthz
 	hResp, err := http.Get(srv.URL + "/healthz")
 	if err != nil {
 		t.Fatalf("healthz: %v", err)
@@ -443,7 +460,6 @@ func TestIntegrationServerPlaceCancelFills(t *testing.T) {
 		t.Fatalf("expected 200 healthz, got %d", hResp.StatusCode)
 	}
 
-	// Admin status
 	aResp, err := http.Get(srv.URL + "/admin/status")
 	if err != nil {
 		t.Fatalf("admin status: %v", err)

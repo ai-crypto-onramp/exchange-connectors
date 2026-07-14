@@ -11,6 +11,7 @@ import (
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/audit"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/book"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
+	"github.com/shopspring/decimal"
 )
 
 type Service struct {
@@ -35,10 +36,10 @@ func NewService(conn venue.VenueConnector, sink audit.Sink, cfg Config) (*Servic
 	}
 	return &Service{
 		connector: conn,
-		book:      agg,
-		audit:     sink,
+		book:     agg,
+		audit:    sink,
 		venueName: cfg.VenueName,
-		ready:     true,
+		ready:    true,
 	}, nil
 }
 
@@ -78,11 +79,11 @@ func (s *Service) handleReadyz(w http.ResponseWriter, r *http.Request) {
 }
 
 type adminStatus struct {
-	Venue            string             `json:"venue"`
-	CircuitBreaker    string             `json:"circuit_breaker"`
-	RateLimitHeadroom string            `json:"rate_limit_headroom"`
-	LastFill          *venue.Fill       `json:"last_fill"`
-	Balances          *venue.Balances   `json:"balances,omitempty"`
+	Venue             string          `json:"venue"`
+	CircuitBreaker    string          `json:"circuit_breaker"`
+	RateLimitHeadroom string          `json:"rate_limit_headroom"`
+	LastFill          *venue.Fill     `json:"last_fill"`
+	Balances          *venue.Balances `json:"balances,omitempty"`
 }
 
 func (s *Service) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
@@ -100,27 +101,33 @@ func (s *Service) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleRotateCreds(w http.ResponseWriter, r *http.Request) {
+	if s.audit != nil {
+		s.audit.Emit(audit.Event{
+			Type:  audit.EventCredRotation,
+			Venue: s.venueName,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "rotated"})
 }
 
 type orderRequest struct {
-	Venue  string  `json:"venue"`
-	Pair   string  `json:"pair"`
-	Side   string  `json:"side"`
-	Type   string  `json:"type"`
-	Amount float64 `json:"amount"`
-	Price  float64 `json:"price"`
+	Venue  string `json:"venue"`
+	Pair   string `json:"pair"`
+	Side   string `json:"side"`
+	Type   string `json:"type"`
+	Amount string `json:"amount"`
+	Price  string `json:"price"`
 }
 
 type orderResponse struct {
-	VenueOrderID string          `json:"venue_order_id"`
-	ClientOrderID string         `json:"client_order_id"`
-	Status       string           `json:"status"`
-	FilledQty    float64          `json:"filled_qty"`
-	AvgPrice     float64          `json:"avg_price"`
-	Fills        []venue.Fill     `json:"fills"`
-	Venue        string           `json:"venue"`
-	Pair         string           `json:"pair"`
+	VenueOrderID   string          `json:"venue_order_id"`
+	ClientOrderID  string          `json:"client_order_id"`
+	Status         string          `json:"status"`
+	FilledQty      decimal.Decimal `json:"filled_qty"`
+	AvgPrice       decimal.Decimal `json:"avg_price"`
+	Fills          []venue.Fill    `json:"fills"`
+	Venue          string          `json:"venue"`
+	Pair           string          `json:"pair"`
 }
 
 func (s *Service) handleOrdersRoot(w http.ResponseWriter, r *http.Request) {
@@ -133,16 +140,29 @@ func (s *Service) handleOrdersRoot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	if req.Venue == "" || req.Pair == "" || req.Side == "" || req.Type == "" || req.Amount <= 0 {
+	if req.Venue == "" || req.Pair == "" || req.Side == "" || req.Type == "" || req.Amount == "" {
 		writeError(w, http.StatusBadRequest, "missing or invalid fields")
 		return
+	}
+	amount, err := decimal.NewFromString(req.Amount)
+	if err != nil || amount.LessThanOrEqual(decimal.Zero) {
+		writeError(w, http.StatusBadRequest, "invalid amount")
+		return
+	}
+	var price decimal.Decimal
+	if req.Price != "" {
+		price, err = decimal.NewFromString(req.Price)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid price")
+			return
+		}
 	}
 	vReq := venue.OrderRequest{
 		Symbol:   req.Pair,
 		Side:     venue.Side(req.Side),
 		Type:     venue.OrderType(req.Type),
-		Quantity: req.Amount,
-		Price:    req.Price,
+		Quantity: amount,
+		Price:    price,
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -160,16 +180,16 @@ func (s *Service) handleOrdersRoot(w http.ResponseWriter, r *http.Request) {
 			Pair:      req.Pair,
 			Side:      req.Side,
 			OrderType: req.Type,
-			Quantity:  req.Amount,
-			Price:     req.Price,
+			Quantity:  amount,
+			Price:     price,
 		})
 		for _, f := range resp.Fills {
 			fc := f
 			s.audit.Emit(audit.Event{
-				Type:  audit.EventFill,
-				Venue: s.venueName,
+				Type:    audit.EventFill,
+				Venue:   s.venueName,
 				OrderID: resp.VenueOrderID,
-				Pair:   req.Pair,
+				Pair:    req.Pair,
 				Fill: &audit.FillDetail{
 					TradeID:  fc.TradeID,
 					Price:    fc.Price,
@@ -250,6 +270,19 @@ func (s *Service) handleOrderSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"order_id": id, "fills": fills})
+	case "status", "":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		o, err := s.connector.GetOrder(ctx, id)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "get order: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, o)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
@@ -266,6 +299,16 @@ func (s *Service) handleBalances(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "balances: "+err.Error())
 		return
+	}
+	if s.audit != nil {
+		for _, bal := range b.Assets {
+			bc := bal
+			s.audit.Emit(audit.Event{
+				Type:    audit.EventBalanceSnapshot,
+				Venue:   s.venueName,
+				Balance: &audit.BalanceDetail{Asset: bc.Asset, Free: bc.Free, Locked: bc.Locked},
+			})
+		}
 	}
 	writeJSON(w, http.StatusOK, b)
 }

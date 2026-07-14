@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 func TestDummyPlaceOrderFill(t *testing.T) {
@@ -15,7 +17,7 @@ func TestDummyPlaceOrderFill(t *testing.T) {
 		Symbol:        "BTCUSDT",
 		Side:          SideBuy,
 		Type:          OrderTypeMarket,
-		Quantity:      0.5,
+		Quantity:      decimal.NewFromFloat(0.5),
 	})
 	if err != nil {
 		t.Fatalf("place: %v", err)
@@ -23,7 +25,7 @@ func TestDummyPlaceOrderFill(t *testing.T) {
 	if resp.Status != OrderStatusFilled {
 		t.Fatalf("expected filled, got %s", resp.Status)
 	}
-	if resp.FilledQty != 0.5 {
+	if !resp.FilledQty.Equal(decimal.NewFromFloat(0.5)) {
 		t.Fatalf("filled qty: %v", resp.FilledQty)
 	}
 	if resp.VenueOrderID != "c1" {
@@ -32,7 +34,7 @@ func TestDummyPlaceOrderFill(t *testing.T) {
 	if len(resp.Fills) != 1 {
 		t.Fatalf("expected 1 fill, got %d", len(resp.Fills))
 	}
-	if resp.Fills[0].Price <= 0 {
+	if resp.Fills[0].Price.LessThanOrEqual(decimal.Zero) {
 		t.Fatalf("price should be positive: %v", resp.Fills[0].Price)
 	}
 	if resp.Fills[0].FeeAsset != "USDT" {
@@ -47,13 +49,13 @@ func TestDummyPlaceOrderLimitPrice(t *testing.T) {
 		Symbol:        "BTCUSDT",
 		Side:          SideSell,
 		Type:          OrderTypeLimit,
-		Quantity:      1,
-		Price:         51000,
+		Quantity:      decimal.NewFromInt(1),
+		Price:         decimal.NewFromInt(51000),
 	})
 	if err != nil {
 		t.Fatalf("place: %v", err)
 	}
-	if resp.AvgPrice != 51000 {
+	if !resp.AvgPrice.Equal(decimal.NewFromInt(51000)) {
 		t.Fatalf("expected limit price 51000, got %v", resp.AvgPrice)
 	}
 }
@@ -61,7 +63,7 @@ func TestDummyPlaceOrderLimitPrice(t *testing.T) {
 func TestDummyCancelOrder(t *testing.T) {
 	c := NewDummyVenueConnector()
 	_, _ = c.PlaceOrder(context.Background(), OrderRequest{
-		ClientOrderID: "c3", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c3", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	if err := c.CancelOrder(context.Background(), CancelRequest{VenueOrderID: "c3"}); err != nil {
 		t.Fatalf("cancel: %v", err)
@@ -77,7 +79,7 @@ func TestDummyCancelOrder(t *testing.T) {
 func TestDummyCancelOrderClientID(t *testing.T) {
 	c := NewDummyVenueConnector()
 	_, _ = c.PlaceOrder(context.Background(), OrderRequest{
-		ClientOrderID: "c4", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c4", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	if err := c.CancelOrder(context.Background(), CancelRequest{ClientOrderID: "c4"}); err != nil {
 		t.Fatalf("cancel: %v", err)
@@ -87,10 +89,10 @@ func TestDummyCancelOrderClientID(t *testing.T) {
 func TestDummyGetFillsByOrder(t *testing.T) {
 	c := NewDummyVenueConnector()
 	_, _ = c.PlaceOrder(context.Background(), OrderRequest{
-		ClientOrderID: "c5", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c5", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	_, _ = c.PlaceOrder(context.Background(), OrderRequest{
-		ClientOrderID: "c6", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c6", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	fills, err := c.GetFills(context.Background(), FillQuery{VenueOrderID: "c5"})
 	if err != nil {
@@ -108,7 +110,7 @@ func TestDummyGetFillsTimeWindow(t *testing.T) {
 	c := NewDummyVenueConnector()
 	start := time.Now().Add(-1 * time.Hour)
 	_, _ = c.PlaceOrder(context.Background(), OrderRequest{
-		ClientOrderID: "c7", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c7", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	end := time.Now().Add(1 * time.Hour)
 	fills, err := c.GetFills(context.Background(), FillQuery{Start: start, End: end})
@@ -128,7 +130,7 @@ func TestDummyGetFillsLimit(t *testing.T) {
 	c := NewDummyVenueConnector()
 	for i := 0; i < 5; i++ {
 		_, _ = c.PlaceOrder(context.Background(), OrderRequest{
-			ClientOrderID: "o" + strconv.Itoa(i), Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: 1,
+			ClientOrderID: "o" + strconv.Itoa(i), Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 		})
 	}
 	fills, _ := c.GetFills(context.Background(), FillQuery{Limit: 2})
@@ -143,10 +145,10 @@ func TestDummyGetBalances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("balances: %v", err)
 	}
-	if b.Assets["BTC"].Free != 1.5 {
+	if !b.Assets["BTC"].Free.Equal(decimal.NewFromFloat(1.5)) {
 		t.Fatalf("btc free: %v", b.Assets["BTC"].Free)
 	}
-	if b.Assets["USDT"].Locked != 1000 {
+	if !b.Assets["USDT"].Locked.Equal(decimal.NewFromInt(1000)) {
 		t.Fatalf("usdt locked: %v", b.Assets["USDT"].Locked)
 	}
 }
@@ -167,7 +169,7 @@ func TestDummySubscribeBook(t *testing.T) {
 		if len(upd.Bids) == 0 || len(upd.Asks) == 0 {
 			t.Fatalf("empty book")
 		}
-		if upd.Bids[0].Price >= upd.Asks[0].Price {
+		if upd.Bids[0].Price.GreaterThanOrEqual(upd.Asks[0].Price) {
 			t.Fatalf("bid >= ask: %v >= %v", upd.Bids[0].Price, upd.Asks[0].Price)
 		}
 		got++
@@ -183,7 +185,7 @@ func TestDummyLastFill(t *testing.T) {
 		t.Fatalf("expected nil last fill, got %+v", lf)
 	}
 	_, _ = c.PlaceOrder(context.Background(), OrderRequest{
-		ClientOrderID: "c8", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c8", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
 	lf := c.LastFill()
 	if lf == nil {
@@ -199,10 +201,35 @@ func TestDummyPriceFromEnv(t *testing.T) {
 	defer os.Unsetenv("DUMMY_PRICE")
 	c := NewDummyVenueConnector()
 	resp, _ := c.PlaceOrder(context.Background(), OrderRequest{
-		ClientOrderID: "c9", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: 1,
+		ClientOrderID: "c9", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: decimal.NewFromInt(1),
 	})
-	if resp.AvgPrice != 12345 {
+	if !resp.AvgPrice.Equal(decimal.NewFromInt(12345)) {
 		t.Fatalf("expected env price 12345, got %v", resp.AvgPrice)
+	}
+}
+
+func TestDummyGetOrder(t *testing.T) {
+	c := NewDummyVenueConnector()
+	_, _ = c.PlaceOrder(context.Background(), OrderRequest{
+		ClientOrderID: "c10", Symbol: "BTCUSDT", Side: SideBuy, Type: OrderTypeMarket, Quantity: decimal.NewFromInt(1),
+	})
+	o, err := c.GetOrder(context.Background(), "c10")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if o.VenueOrderID != "c10" {
+		t.Fatalf("order id: %s", o.VenueOrderID)
+	}
+	if o.Status != OrderStatusFilled {
+		t.Fatalf("status: %s", o.Status)
+	}
+}
+
+func TestDummyGetOrderNotFound(t *testing.T) {
+	c := NewDummyVenueConnector()
+	_, err := c.GetOrder(context.Background(), "missing")
+	if err != ErrOrderNotFound {
+		t.Fatalf("expected ErrOrderNotFound, got %v", err)
 	}
 }
 

@@ -1,0 +1,172 @@
+package events
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
+	"github.com/shopspring/decimal"
+)
+
+type fakePublisher struct {
+	mu       sync.Mutex
+	fills    [][]byte
+	balances [][]byte
+	failN    int
+	calls    int
+}
+
+func (f *fakePublisher) Publish(ctx context.Context, subject string, data []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.failN > 0 && f.calls <= f.failN {
+		return errors.New("transient")
+	}
+	if subject == "recon.fills" {
+		f.fills = append(f.fills, data)
+	} else if subject == "recon.balances" {
+		f.balances = append(f.balances, data)
+	}
+	return nil
+}
+
+func (f *fakePublisher) FillCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.fills)
+}
+
+func TestPublishFill(t *testing.T) {
+	f := &fakePublisher{}
+	b := NewBus(f, "recon")
+	ev := FillEvent{
+		VenueOrderID: "O1",
+		Venue:        "binance",
+		Pair:         "BTCUSDT",
+		Price:        decimal.NewFromInt(50000),
+		Size:         decimal.NewFromFloat(0.5),
+		Timestamp:    time.Now(),
+	}
+	if err := b.PublishFill(context.Background(), ev); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if f.FillCount() != 1 {
+		t.Fatalf("fills: %d", f.FillCount())
+	}
+	var got FillEvent
+	_ = json.Unmarshal(f.fills[0], &got)
+	if got.VenueOrderID != "O1" {
+		t.Fatalf("order: %s", got.VenueOrderID)
+	}
+	if got.InternalID != "O1" {
+		t.Fatalf("internal: %s", got.InternalID)
+	}
+	if !got.Price.Equal(decimal.NewFromInt(50000)) {
+		t.Fatalf("price: %v", got.Price)
+	}
+}
+
+func TestPublishFillRetry(t *testing.T) {
+	f := &fakePublisher{failN: 2}
+	b := NewBus(f, "recon")
+	ev := FillEvent{VenueOrderID: "O1", Venue: "binance", Pair: "BTCUSDT", Timestamp: time.Now()}
+	b.maxRetries = 5
+	if err := b.PublishFill(context.Background(), ev); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if f.FillCount() != 1 {
+		t.Fatalf("fills: %d", f.FillCount())
+	}
+}
+
+func TestPublishFillDeadLetter(t *testing.T) {
+	f := &fakePublisher{failN: 100}
+	b := NewBus(f, "recon")
+	b.maxRetries = 1
+	var dlq FillEvent
+	b.SetDeadLetterHandler(func(ev FillEvent, err error) {
+		dlq = ev
+	})
+	err := b.PublishFill(context.Background(), FillEvent{VenueOrderID: "O1", Venue: "binance", Timestamp: time.Now()})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if dlq.VenueOrderID != "O1" {
+		t.Fatalf("dlq: %+v", dlq)
+	}
+}
+
+func TestPublishFillMissingOrderID(t *testing.T) {
+	f := &fakePublisher{}
+	b := NewBus(f, "recon")
+	err := b.PublishFill(context.Background(), FillEvent{Venue: "binance"})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestPublishBalance(t *testing.T) {
+	f := &fakePublisher{}
+	b := NewBus(f, "recon")
+	ev := BalanceEvent{
+		Venue:    "binance",
+		Asset:    "BTC",
+		Free:     decimal.NewFromInt(1),
+		Locked:   decimal.NewFromFloat(0.1),
+		Timestamp: time.Now(),
+	}
+	if err := b.PublishBalance(context.Background(), ev); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.balances) != 1 {
+		t.Fatalf("balances: %d", len(f.balances))
+	}
+}
+
+func TestPublishBalanceMissing(t *testing.T) {
+	f := &fakePublisher{}
+	b := NewBus(f, "recon")
+	if err := b.PublishBalance(context.Background(), BalanceEvent{Asset: "BTC"}); err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestFillFromVenue(t *testing.T) {
+	f := venue.Fill{
+		VenueOrderID: "O1",
+		TradeID:      "T1",
+		Price:        decimal.NewFromInt(100),
+		Quantity:     decimal.NewFromInt(1),
+		Fee:          decimal.NewFromFloat(0.1),
+		FeeAsset:     "USDT",
+		Timestamp:    time.Now(),
+	}
+	ev := FillFromVenue("binance", "INT1", "BTCUSDT", f)
+	if ev.VenueOrderID != "O1" || ev.InternalID != "INT1" || ev.Venue != "binance" {
+		t.Fatalf("ev: %+v", ev)
+	}
+	if ev.Pair != "BTCUSDT" {
+		t.Fatalf("pair: %s", ev.Pair)
+	}
+}
+
+func TestBalanceFromVenue(t *testing.T) {
+	b := BalanceFromVenue("binance", venue.Balance{Asset: "BTC", Free: decimal.NewFromInt(1), Locked: decimal.Zero})
+	if b.Venue != "binance" || b.Asset != "BTC" {
+		t.Fatalf("b: %+v", b)
+	}
+}
+
+func TestNATSPublisherNilConn(t *testing.T) {
+	p := NewNATSPublisher(nil)
+	if err := p.Publish(context.Background(), "subj", []byte("x")); err == nil {
+		t.Fatalf("expected error")
+	}
+}

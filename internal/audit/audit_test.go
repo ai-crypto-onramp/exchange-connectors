@@ -2,6 +2,8 @@ package audit
 
 import (
 	"testing"
+
+	"github.com/shopspring/decimal"
 )
 
 func TestInMemorySinkEmitAndCount(t *testing.T) {
@@ -34,6 +36,48 @@ func TestInMemorySinkEventsCopy(t *testing.T) {
 	evs2 := s.Events()
 	if evs2[0].OrderID == "mutated" {
 		t.Fatalf("Events() returned a live reference, expected a copy")
+	}
+}
+
+func TestInMemorySinkFillEvent(t *testing.T) {
+	s := NewInMemorySink()
+	s.Emit(Event{
+		Type:    EventFill,
+		Venue:   "dummy",
+		OrderID: "o1",
+		Fill: &FillDetail{
+			TradeID:  "t1",
+			Price:    decimal.NewFromInt(100),
+			Quantity: decimal.NewFromFloat(0.5),
+			Fee:      decimal.NewFromFloat(0.05),
+			FeeAsset: "USDT",
+		},
+	})
+	evs := s.Events()
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(evs))
+	}
+	if evs[0].Fill == nil {
+		t.Fatalf("expected fill detail")
+	}
+	if !evs[0].Fill.Price.Equal(decimal.NewFromInt(100)) {
+		t.Fatalf("fill price: %v", evs[0].Fill.Price)
+	}
+}
+
+func TestInMemorySinkBalanceEvent(t *testing.T) {
+	s := NewInMemorySink()
+	s.Emit(Event{
+		Type:    EventBalanceSnapshot,
+		Venue:   "dummy",
+		Balance: &BalanceDetail{Asset: "BTC", Free: decimal.NewFromInt(1), Locked: decimal.Zero},
+	})
+	evs := s.Events()
+	if len(evs) != 1 || evs[0].Balance == nil {
+		t.Fatalf("expected balance event")
+	}
+	if evs[0].Balance.Asset != "BTC" {
+		t.Fatalf("asset: %s", evs[0].Balance.Asset)
 	}
 }
 

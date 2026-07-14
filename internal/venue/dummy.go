@@ -4,24 +4,24 @@ import (
 	"context"
 	"math/rand"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 type DummyVenueConnector struct {
 	mu     sync.Mutex
-	price  float64
+	price  decimal.Decimal
 	fills  []Fill
 	orders map[string]*OrderResponse
 }
 
 func NewDummyVenueConnector() *DummyVenueConnector {
-	price := 50000.0
+	price := decimal.NewFromFloat(50000)
 	if v := os.Getenv("DUMMY_PRICE"); v != "" {
-		if p, err := strconv.ParseFloat(v, 64); err == nil {
+		if p, err := decimal.NewFromString(v); err == nil {
 			price = p
 		}
 	}
@@ -38,7 +38,7 @@ func (d *DummyVenueConnector) PlaceOrder(ctx context.Context, req OrderRequest) 
 		req.ClientOrderID = uuid.NewString()
 	}
 	price := req.Price
-	if price == 0 {
+	if price.IsZero() {
 		d.mu.Lock()
 		price = d.price
 		d.mu.Unlock()
@@ -49,7 +49,7 @@ func (d *DummyVenueConnector) PlaceOrder(ctx context.Context, req OrderRequest) 
 		TradeID:      uuid.NewString(),
 		Price:        price,
 		Quantity:     qty,
-		Fee:          price * qty * 0.001,
+		Fee:          price.Mul(qty).Mul(decimal.NewFromFloat(0.001)),
 		FeeAsset:     "USDT",
 		Timestamp:    time.Now().UTC(),
 	}
@@ -81,6 +81,16 @@ func (d *DummyVenueConnector) CancelOrder(ctx context.Context, req CancelRequest
 	return nil
 }
 
+func (d *DummyVenueConnector) GetOrder(ctx context.Context, venueOrderID string) (*OrderResponse, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if o, ok := d.orders[venueOrderID]; ok {
+		cp := *o
+		return &cp, nil
+	}
+	return nil, ErrOrderNotFound
+}
+
 func (d *DummyVenueConnector) GetFills(ctx context.Context, query FillQuery) ([]Fill, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -105,9 +115,9 @@ func (d *DummyVenueConnector) GetFills(ctx context.Context, query FillQuery) ([]
 
 func (d *DummyVenueConnector) GetBalances(ctx context.Context) (*Balances, error) {
 	assets := map[string]Balance{
-		"BTC":  {Asset: "BTC", Free: 1.5, Locked: 0.1},
-		"USDT": {Asset: "USDT", Free: 250000, Locked: 1000},
-		"ETH":  {Asset: "ETH", Free: 20, Locked: 0},
+		"BTC":  {Asset: "BTC", Free: decimal.NewFromFloat(1.5), Locked: decimal.NewFromFloat(0.1)},
+		"USDT": {Asset: "USDT", Free: decimal.NewFromFloat(250000), Locked: decimal.NewFromFloat(1000)},
+		"ETH":  {Asset: "ETH", Free: decimal.NewFromFloat(20), Locked: decimal.Zero},
 	}
 	return &Balances{Assets: assets}, nil
 }
@@ -127,12 +137,12 @@ func (d *DummyVenueConnector) SubscribeBook(ctx context.Context, pairs []string)
 				base := d.price
 				d.mu.Unlock()
 				for _, pair := range pairs {
-					delta := (rand.Float64() - 0.5) * base * 0.001
-					mid := base + delta
-				upd := BookUpdate{
+					delta := decimal.NewFromFloat(rand.Float64() - 0.5).Mul(base).Mul(decimal.NewFromFloat(0.001))
+					mid := base.Add(delta)
+					upd := BookUpdate{
 						Pair: pair,
-						Bids: []BookLevel{{Price: mid - 1, Size: 0.5}},
-						Asks: []BookLevel{{Price: mid + 1, Size: 0.5}},
+						Bids: []BookLevel{{Price: mid.Sub(decimal.NewFromInt(1)), Size: decimal.NewFromFloat(0.5)}},
+						Asks: []BookLevel{{Price: mid.Add(decimal.NewFromInt(1)), Size: decimal.NewFromFloat(0.5)}},
 						TS:   time.Now().UTC(),
 					}
 					select {

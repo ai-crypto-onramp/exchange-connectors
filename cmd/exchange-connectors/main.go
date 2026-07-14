@@ -9,6 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/adapters/binance"
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/adapters/kraken"
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/adapters/otc"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/audit"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/server"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
@@ -28,7 +31,7 @@ func main() {
 		pairs = splitCSV(p)
 	}
 
-	conn := venue.NewDummyVenueConnector()
+	conn := selectConnector(venueName)
 	sink := audit.NewInMemorySink()
 	svc, err := server.NewService(conn, sink, server.Config{VenueName: venueName, Pairs: pairs})
 	if err != nil {
@@ -53,6 +56,19 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+}
+
+func selectConnector(name string) venue.VenueConnector {
+	switch name {
+	case "binance":
+		return binance.NewConnector(os.Getenv("BINANCE_API_KEY"), os.Getenv("BINANCE_API_SECRET"), nil)
+	case "kraken":
+		return kraken.NewConnector(os.Getenv("KRAKEN_API_KEY"), os.Getenv("KRAKEN_API_SECRET"), nil)
+	case "otc":
+		return otc.NewConnector(os.Getenv("OTC_API_KEY"), nil)
+	default:
+		return venue.NewDummyVenueConnector()
+	}
 }
 
 func splitCSV(s string) []string {

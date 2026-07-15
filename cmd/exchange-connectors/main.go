@@ -34,22 +34,25 @@ func main() {
 
 	conn := selectConnector(venueName)
 	sink := audit.NewInMemorySink()
-	svc, err := server.NewService(conn, sink, server.Config{VenueName: venueName, Pairs: pairs})
-	if err != nil {
-		log.Fatalf("server: %v", err)
-	}
 
 	// When EVENT_BUS_URL is set (kafka://host:9092), construct a Kafka
-	// publisher for fill/balance events and close it on shutdown. The
-	// publisher is exposed via svc for future wiring into the server.
+	// publisher + events.Bus for fill/balance events and close it on
+	// shutdown. When unset, the events bus is nil (events disabled).
 	var eventPub *events.KafkaPublisher
+	var bus *events.Bus
 	if busURL := os.Getenv("EVENT_BUS_URL"); busURL != "" {
 		p, err := events.NewKafkaPublisherFromURL(busURL)
 		if err != nil {
 			log.Printf("events: kafka publisher init failed: %v", err)
 		} else {
 			eventPub = p
+			bus = events.NewBus(p, "recon")
 		}
+	}
+
+	svc, err := server.NewService(conn, sink, server.Config{VenueName: venueName, Pairs: pairs}, bus)
+	if err != nil {
+		log.Fatalf("server: %v", err)
 	}
 
 	srv := &http.Server{

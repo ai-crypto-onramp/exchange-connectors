@@ -10,6 +10,7 @@ import (
 
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/audit"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/book"
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/events"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
 	"github.com/shopspring/decimal"
 )
@@ -18,6 +19,7 @@ type Service struct {
 	connector venue.VenueConnector
 	book      *book.BookAggregator
 	audit     audit.Sink
+	events    *events.Bus
 	venueName string
 	ready     bool
 }
@@ -27,7 +29,8 @@ type Config struct {
 	Pairs     []string
 }
 
-func NewService(conn venue.VenueConnector, sink audit.Sink, cfg Config) (*Service, error) {
+// NewService constructs the service. bus may be nil (events disabled).
+func NewService(conn venue.VenueConnector, sink audit.Sink, cfg Config, bus *events.Bus) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	_ = cancel
 	agg, err := book.NewBookAggregator(ctx, conn, cfg.Pairs)
@@ -38,6 +41,7 @@ func NewService(conn venue.VenueConnector, sink audit.Sink, cfg Config) (*Servic
 		connector: conn,
 		book:     agg,
 		audit:    sink,
+		events:   bus,
 		venueName: cfg.VenueName,
 		ready:    true,
 	}, nil
@@ -199,6 +203,9 @@ func (s *Service) handleOrdersRoot(w http.ResponseWriter, r *http.Request) {
 					TS:       fc.Timestamp,
 				},
 			})
+			if s.events != nil {
+				_ = s.events.PublishFill(ctx, events.FillFromVenue(s.venueName, resp.VenueOrderID, req.Pair, fc))
+			}
 		}
 	}
 	out := orderResponse{
@@ -308,6 +315,9 @@ func (s *Service) handleBalances(w http.ResponseWriter, r *http.Request) {
 				Venue:   s.venueName,
 				Balance: &audit.BalanceDetail{Asset: bc.Asset, Free: bc.Free, Locked: bc.Locked},
 			})
+			if s.events != nil {
+				_ = s.events.PublishBalance(ctx, events.BalanceFromVenue(s.venueName, bc))
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, b)

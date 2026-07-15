@@ -18,7 +18,7 @@ func newTestService(t *testing.T) (*Service, *venue.DummyVenueConnector, *audit.
 	t.Helper()
 	conn := venue.NewDummyVenueConnector()
 	sink := audit.NewInMemorySink()
-	svc, err := NewService(conn, sink, Config{VenueName: "dummy", Pairs: []string{"BTCUSDT"}})
+	svc, err := NewService(conn, sink, Config{VenueName: "dummy", Pairs: []string{"BTCUSDT"}}, nil)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}

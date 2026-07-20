@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,10 +16,13 @@ import (
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/audit"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/events"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/server"
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/store"
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/store/postgres"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
 )
 
 func main() {
+	devMode := os.Getenv("DEV_MODE") == "1"
 	addr := os.Getenv("ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -32,8 +36,11 @@ func main() {
 		pairs = splitCSV(p)
 	}
 
-	conn := selectConnector(venueName)
-	sink := audit.NewInMemorySink()
+	conn := selectConnector(venueName, devMode)
+	if devMode {
+		log.Printf("DEV_MODE=1: reading exchange creds from env (NOT FOR PRODUCTION); venue=%s", venueName)
+	}
+	sink := newAuditSink(venueName, devMode)
 
 	// When EVENT_BUS_URL is set (kafka://host:9092), construct a Kafka
 	// publisher + events.Bus for fill/balance events and close it on
@@ -50,7 +57,7 @@ func main() {
 		}
 	}
 
-	svc, err := server.NewService(conn, sink, server.Config{VenueName: venueName, Pairs: pairs}, bus)
+	svc, err := server.NewService(conn, sink, server.Config{VenueName: venueName, Pairs: pairs, Store: newStore(devMode)}, bus)
 	if err != nil {
 		log.Fatalf("server: %v", err)
 	}
@@ -78,17 +85,43 @@ func main() {
 	}
 }
 
-func selectConnector(name string) venue.VenueConnector {
+func selectConnector(name string, devMode bool) venue.VenueConnector {
 	switch name {
 	case "binance":
-		return binance.NewConnector(os.Getenv("BINANCE_API_KEY"), os.Getenv("BINANCE_API_SECRET"), nil)
+		key, secret := loadExchangeCreds("binance", devMode)
+		return binance.NewConnector(key, secret, nil)
 	case "kraken":
-		return kraken.NewConnector(os.Getenv("KRAKEN_API_KEY"), os.Getenv("KRAKEN_API_SECRET"), nil)
+		key, secret := loadExchangeCreds("kraken", devMode)
+		return kraken.NewConnector(key, secret, nil)
 	case "otc":
-		return otc.NewConnector(os.Getenv("OTC_API_KEY"), nil)
+		key, _ := loadExchangeCreds("otc", devMode)
+		return otc.NewConnector(key, nil)
 	default:
+		if !devMode {
+			log.Fatalf("VENUE_FAMILY=%q not a real venue and DEV_MODE!=1; refusing to start with dummy connector in production mode", name)
+		}
 		return venue.NewDummyVenueConnector()
 	}
+}
+
+// loadExchangeCreds loads exchange API credentials. In production it must
+// come from a secrets manager (e.g. Vault via secrets.Manager); the env-var
+// path is only permitted when DEV_MODE=1.
+func loadExchangeCreds(venue string, devMode bool) (apiKey, apiSecret string) {
+	if devMode {
+		apiKey = os.Getenv(strings.ToUpper(venue) + "_API_KEY")
+		apiSecret = os.Getenv(strings.ToUpper(venue) + "_API_SECRET")
+		return
+	}
+	// Production: secrets manager integration is not yet wired; require the
+	// URL and refuse to start without it.
+	if os.Getenv("SECRETS_MANAGER_URL") == "" {
+		log.Fatalf("SECRETS_MANAGER_URL required in production mode; secrets.Manager integration not yet wired — set DEV_MODE=1 for local dev")
+	}
+	// Placeholder until secrets.Manager is wired at the composition root.
+	// Fatal above guards production; the env path stays reachable only in dev.
+	log.Fatalf("SECRETS_MANAGER_URL set but secrets.Manager wiring not yet implemented — set DEV_MODE=1 for local dev")
+	return
 }
 
 func splitCSV(s string) []string {
@@ -108,4 +141,41 @@ func splitCSV(s string) []string {
 		out = append(out, cur)
 	}
 	return out
+}
+
+func newStore(devMode bool) store.Store {
+	dsn := os.Getenv("DB_URL")
+	if dsn != "" {
+		db, err := postgres.Open(context.Background(), dsn)
+		if err != nil {
+			log.Fatalf("postgres: open: %v", err)
+		}
+		return db
+	}
+	if devMode {
+		log.Printf("WARNING: DEV_MODE=1 with no DB_URL — using in-memory store; all state is lost on restart")
+		return store.New()
+	}
+	log.Fatalf("DB_URL required in production mode — set DEV_MODE=1 to allow in-memory store for development")
+	return store.New()
+}
+
+func newAuditSink(venue string, devMode bool) audit.Sink {
+	brokers := os.Getenv("KAFKA_BROKERS")
+	if brokers == "" {
+		if devMode {
+			log.Printf("warn: KAFKA_BROKERS unset and DEV_MODE=1; audit events recorded in-memory only")
+			return audit.NewInMemorySink()
+		}
+		log.Fatalf("KAFKA_BROKERS unset and DEV_MODE not set; cannot start audit producer")
+	}
+	ks, err := audit.NewKafkaSink(splitCSV(brokers), venue)
+	if err != nil {
+		if devMode {
+			log.Printf("warn: audit kafka init failed (DEV_MODE): %v; falling back to in-memory", err)
+			return audit.NewInMemorySink()
+		}
+		log.Fatalf("audit kafka init: %v", err)
+	}
+	return ks
 }

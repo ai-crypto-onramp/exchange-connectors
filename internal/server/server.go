@@ -11,6 +11,7 @@ import (
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/audit"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/book"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/events"
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/store"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
 	"github.com/shopspring/decimal"
 )
@@ -22,20 +23,25 @@ type Service struct {
 	events    *events.Bus
 	venueName string
 	ready     bool
+	store     store.Store
 }
 
 type Config struct {
 	VenueName string
 	Pairs     []string
+	Store     store.Store
 }
 
-// NewService constructs the service. bus may be nil (events disabled).
 func NewService(conn venue.VenueConnector, sink audit.Sink, cfg Config, bus *events.Bus) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	_ = cancel
 	agg, err := book.NewBookAggregator(ctx, conn, cfg.Pairs)
 	if err != nil {
 		return nil, err
+	}
+	st := cfg.Store
+	if st == nil {
+		st = store.New()
 	}
 	return &Service{
 		connector: conn,
@@ -44,6 +50,7 @@ func NewService(conn venue.VenueConnector, sink audit.Sink, cfg Config, bus *eve
 		events:   bus,
 		venueName: cfg.VenueName,
 		ready:    true,
+		store:    st,
 	}, nil
 }
 
@@ -174,6 +181,35 @@ func (s *Service) handleOrdersRoot(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "place order: "+err.Error())
 		return
+	}
+	if s.store != nil {
+		_, _ = s.store.RecordOrder(store.Order{
+			VenueOrderID:  resp.VenueOrderID,
+			ClientOrderID: resp.ClientOrderID,
+			Venue:         s.venueName,
+			Pair:          req.Pair,
+			Side:          req.Side,
+			OrderType:     req.Type,
+			Status:        string(resp.Status),
+			FilledQty:     resp.FilledQty,
+			AvgPrice:      resp.AvgPrice,
+			Quantity:      amount,
+			Price:         price,
+		})
+		for _, f := range resp.Fills {
+			fc := f
+			_, _ = s.store.RecordFill(store.Fill{
+				VenueOrderID: resp.VenueOrderID,
+				TradeID:      fc.TradeID,
+				Venue:        s.venueName,
+				Pair:         req.Pair,
+				Price:        fc.Price,
+				Quantity:     fc.Quantity,
+				Fee:          fc.Fee,
+				FeeAsset:     fc.FeeAsset,
+				Timestamp:    fc.Timestamp,
+			})
+		}
 	}
 	if s.audit != nil {
 		s.audit.Emit(audit.Event{

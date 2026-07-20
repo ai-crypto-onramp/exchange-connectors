@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/ratelimit"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
@@ -240,5 +241,235 @@ func TestParseURL(t *testing.T) {
 	u, _ := url.Parse("https://api.binance.com/api/v3/order?symbol=BTCUSDT&signature=abc")
 	if u.Path != "/api/v3/order" {
 		t.Fatalf("path: %s", u.Path)
+	}
+}
+
+func TestPlaceOrderMissingClientID(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {})
+	_, err := c.PlaceOrder(context.Background(), venue.OrderRequest{
+		Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: decimal.NewFromInt(1),
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing client order id")
+	}
+}
+
+func TestPlaceOrderBadJSON(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`not-json`))
+	})
+	_, err := c.PlaceOrder(context.Background(), venue.OrderRequest{
+		ClientOrderID: "c1", Symbol: "BTCUSDT", Side: venue.SideBuy, Type: venue.OrderTypeMarket, Quantity: decimal.NewFromInt(1),
+	})
+	if err == nil {
+		t.Fatalf("expected json error")
+	}
+}
+
+func TestGetOrderBadJSON(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`not-json`))
+	})
+	_, err := c.GetOrder(context.Background(), "123")
+	if err == nil {
+		t.Fatalf("expected json error")
+	}
+}
+
+func TestGetFillsAllParams(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("orderId") != "9" {
+			t.Errorf("orderId: %s", q.Get("orderId"))
+		}
+		if q.Get("startTime") == "" {
+			t.Errorf("missing startTime")
+		}
+		if q.Get("endTime") == "" {
+			t.Errorf("missing endTime")
+		}
+		if q.Get("limit") != "10" {
+			t.Errorf("limit: %s", q.Get("limit"))
+		}
+		_, _ = w.Write([]byte(`{"fills":[]}`))
+	})
+	start := time.Unix(1700000000, 0)
+	end := time.Unix(1700001000, 0)
+	fills, err := c.GetFills(context.Background(), venue.FillQuery{
+		VenueOrderID: "9", Start: start, End: end, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("fills: %v", err)
+	}
+	if len(fills) != 0 {
+		t.Fatalf("expected empty fills, got %d", len(fills))
+	}
+}
+
+func TestGetFillsDefaultLimit(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "500" {
+			t.Errorf("default limit: %s", r.URL.Query().Get("limit"))
+		}
+		_, _ = w.Write([]byte(`{"fills":[]}`))
+	})
+	fills, err := c.GetFills(context.Background(), venue.FillQuery{})
+	if err != nil {
+		t.Fatalf("fills: %v", err)
+	}
+	if len(fills) != 0 {
+		t.Fatalf("expected empty fills, got %d", len(fills))
+	}
+}
+
+func TestGetFillsBadJSON(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`not-json`))
+	})
+	_, err := c.GetFills(context.Background(), venue.FillQuery{VenueOrderID: "1"})
+	if err == nil {
+		t.Fatalf("expected json error")
+	}
+}
+
+func TestGetBalancesBadJSON(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`not-json`))
+	})
+	_, err := c.GetBalances(context.Background())
+	if err == nil {
+		t.Fatalf("expected json error")
+	}
+}
+
+func TestGetBalancesStatus418(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(418)
+		_, _ = w.Write([]byte(`{"code":-1003,"msg":"banned"}`))
+	})
+	_, err := c.GetBalances(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "rate limited") {
+		t.Fatalf("expected rate limited err, got %v", err)
+	}
+}
+
+func TestGetBalancesStatus400(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		_, _ = w.Write([]byte(`{"code":-2014,"msg":"bad key"}`))
+	})
+	_, err := c.GetBalances(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "code -2014") {
+		t.Fatalf("expected 4xx err, got %v", err)
+	}
+}
+
+func TestGetBalancesUsedWeightHeader(t *testing.T) {
+	c, _ := newTestConnector(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-MBX-USED-WEIGHT-1M", "999")
+		_, _ = w.Write([]byte(`{"balances":[]}`))
+	})
+	b, err := c.GetBalances(context.Background())
+	if err != nil {
+		t.Fatalf("balances: %v", err)
+	}
+	if len(b.Assets) != 0 {
+		t.Fatalf("expected no assets, got %d", len(b.Assets))
+	}
+	if c.limiter.Used() != 999 {
+		t.Fatalf("used weight not updated: %d", c.limiter.Used())
+	}
+}
+
+func TestReadBudgetDefault(t *testing.T) {
+	if readBudget() != 1200 {
+		t.Fatalf("default budget: %d", readBudget())
+	}
+}
+
+func TestNormalizeSymbol(t *testing.T) {
+	if normalizeSymbol("btcusdt") != "BTCUSDT" {
+		t.Fatalf("normalize: %s", normalizeSymbol("btcusdt"))
+	}
+}
+
+func TestMapStatusAllCases(t *testing.T) {
+	cases := []struct {
+		in   string
+		want venue.OrderStatus
+	}{
+		{"NEW", venue.OrderStatusNew},
+		{"new", venue.OrderStatusNew},
+		{"PARTIALLY_FILLED", venue.OrderStatusPartial},
+		{"PARTIALLYFILLED", venue.OrderStatusPartial},
+		{"FILLED", venue.OrderStatusFilled},
+		{"CANCELED", venue.OrderStatusCanceled},
+		{"CANCELLED", venue.OrderStatusCanceled},
+		{"EXPIRED", venue.OrderStatus("EXPIRED")},
+	}
+	for _, c := range cases {
+		if got := mapStatus(c.in); got != c.want {
+			t.Fatalf("mapStatus(%q) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}
+
+func TestMapOrderWithQuoteAvg(t *testing.T) {
+	r := placeOrderResp{
+		OrderID: 7, ClientOrderID: "c", Status: "FILLED",
+		ExecutedQty: "2", CummulativeQuoteQty: "100000",
+		Fills: []binanceFill{{Price: "50000", Qty: "1", Commission: "1", CommissionAsset: "USDT", TradeID: 1}},
+	}
+	o := mapOrder(r)
+	if !o.AvgPrice.Equal(decimal.NewFromInt(50000)) {
+		t.Fatalf("avg: %v", o.AvgPrice)
+	}
+	if len(o.Fills) != 1 || o.Fills[0].VenueOrderID != "7" {
+		t.Fatalf("fills: %+v", o.Fills)
+	}
+}
+
+func TestMapOrderNoQuoteUsesFillPrice(t *testing.T) {
+	r := placeOrderResp{
+		OrderID: 8, ClientOrderID: "c", Status: "FILLED",
+		ExecutedQty: "1",
+		Fills: []binanceFill{{Price: "51000", Qty: "1", Commission: "0", CommissionAsset: "USDT", TradeID: 2}},
+	}
+	o := mapOrder(r)
+	if !o.AvgPrice.Equal(decimal.NewFromInt(51000)) {
+		t.Fatalf("avg from fill: %v", o.AvgPrice)
+	}
+}
+
+func TestMapOrderSimpleNoExec(t *testing.T) {
+	r := orderResp{OrderID: 1, ClientOrderID: "c", Status: "NEW", ExecutedQty: "0", CummulativeQuoteQty: "0"}
+	o := mapOrderSimple(r)
+	if !o.AvgPrice.Equal(decimal.Zero) {
+		t.Fatalf("avg zero: %v", o.AvgPrice)
+	}
+	if o.Status != venue.OrderStatusNew {
+		t.Fatalf("status: %s", o.Status)
+	}
+}
+
+func TestSubscribeBookNoPairs(t *testing.T) {
+	_, err := SubscribeBook(context.Background(), "wss://x", "https://x", nil)
+	if err == nil {
+		t.Fatalf("expected error for no pairs")
+	}
+}
+
+func TestStreamToPair(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"btcusdt@depth", "btcusdt"},
+		{"btcusdt", "btcusdt"},
+		{"@depth", "@depth"},
+	}
+	for _, c := range cases {
+		if got := streamToPair(c.in); got != c.want {
+			t.Fatalf("streamToPair(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }

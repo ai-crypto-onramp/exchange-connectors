@@ -132,3 +132,91 @@ func TestParseMessage(t *testing.T) {
 		t.Fatalf("a: %v", m["a"])
 	}
 }
+
+func TestClientConnect(t *testing.T) {
+	srv := startWSServer(t, func(conn *websocket.Conn) {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"ok":true}`))
+		_ = conn.Close()
+	})
+	url := "ws" + strings.TrimPrefix(srv.URL, "http")
+	c := NewClient(url, "test")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if err := c.WriteJSON(map[string]string{"a": "1"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
+func TestClientConnectError(t *testing.T) {
+	c := NewClient("ws://127.0.0.1:0/nonexistent", "test")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.Connect(ctx); err == nil {
+		t.Fatalf("expected connect error")
+	}
+	if err := c.WriteJSON(map[string]string{"a": "1"}); err == nil {
+		t.Fatalf("expected write error when not connected")
+	}
+}
+
+func TestClientCloseNoConn(t *testing.T) {
+	c := NewClient("ws://127.0.0.1:0/x", "test")
+	if err := c.Close(); err != nil {
+		t.Fatalf("close nil conn: %v", err)
+	}
+}
+
+func TestBookReconstructorLagZero(t *testing.T) {
+	r := NewBookReconstructor("binance", "BTCUSDT")
+	if r.Lag() != 0 {
+		t.Fatalf("lag should be 0 for fresh reconstructor: %v", r.Lag())
+	}
+}
+
+func TestBookReconstructorLagAfterUpdate(t *testing.T) {
+	r := NewBookReconstructor("binance", "BTCUSDT")
+	r.ApplySnapshot([][2]string{{"50000", "1"}}, [][2]string{{"50001", "1"}})
+	if r.Lag() < 0 {
+		t.Fatalf("lag should be non-negative after update: %v", r.Lag())
+	}
+	_, gap := r.ApplyDiff(2, [][2]string{{"49999", "1"}}, nil)
+	if gap {
+		t.Fatalf("unexpected gap")
+	}
+	if r.Lag() < 0 {
+		t.Fatalf("lag should be non-negative after diff: %v", r.Lag())
+	}
+}
+
+func TestBookReconstructorApplyDiffStaleSeq(t *testing.T) {
+	r := NewBookReconstructor("binance", "BTCUSDT")
+	r.ApplySnapshot([][2]string{{"50000", "1"}}, [][2]string{{"50001", "1"}})
+	_, gap := r.ApplyDiff(5, [][2]string{{"49999", "1"}}, nil)
+	if gap {
+		t.Fatalf("unexpected gap on first diff")
+	}
+	ok, gap := r.ApplyDiff(5, [][2]string{{"49998", "1"}}, nil)
+	if ok || gap {
+		t.Fatalf("stale seq should return false,false, got ok=%v gap=%v", ok, gap)
+	}
+}
+
+func TestBookReconstructorTopNEmpty(t *testing.T) {
+	r := NewBookReconstructor("binance", "BTCUSDT")
+	bids, asks := r.TopN(10)
+	if len(bids) != 0 || len(asks) != 0 {
+		t.Fatalf("expected empty, got bids=%v asks=%v", bids, asks)
+	}
+}
+
+func TestParseMessageError(t *testing.T) {
+	if _, err := ParseMessage([]byte(`{bad json`)); err == nil {
+		t.Fatalf("expected parse error")
+	}
+}

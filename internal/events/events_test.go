@@ -189,3 +189,46 @@ func TestNewKafkaPublisherFromURLBadScheme(t *testing.T) {
 		t.Fatalf("expected error for non-kafka scheme")
 	}
 }
+
+func TestNewKafkaPublisherDefaultTopic(t *testing.T) {
+	p, err := NewKafkaPublisher([]string{"broker1:9092"}, "")
+	if err != nil {
+		t.Fatalf("publisher: %v", err)
+	}
+	if p.topic != "recon" {
+		t.Fatalf("default topic: %s", p.topic)
+	}
+	_ = p.Close()
+}
+
+func TestNewKafkaPublisherFromURLWithTopic(t *testing.T) {
+	cases := []struct {
+		url       string
+		wantTopic string
+	}{
+		{"kafka://broker1:9092", "recon"},
+		{"kafka://broker1:9092?topic=fills", "fills"},
+		{"kafka://broker1:9092,broker2:9092?topic=balances", "balances"},
+		{"kafka://broker1:9092,broker2:9092", "recon"},
+		{"kafka:// broker1:9092 , broker2:9092 ?topic=settle", "settle"},
+	}
+	for i, c := range cases {
+		p, err := NewKafkaPublisherFromURL(c.url)
+		if err != nil {
+			t.Fatalf("case %d: %v", i, err)
+		}
+		if p.topic != c.wantTopic {
+			t.Fatalf("case %d: topic %s want %s", i, p.topic, c.wantTopic)
+		}
+		_ = p.Close()
+	}
+}
+
+func TestNewKafkaPublisherFromURLEmptyBrokers(t *testing.T) {
+	if _, err := NewKafkaPublisherFromURL("kafka://"); err == nil {
+		t.Fatalf("expected error for empty brokers")
+	}
+	if _, err := NewKafkaPublisherFromURL("kafka://  "); err == nil {
+		t.Fatalf("expected error for whitespace-only brokers")
+	}
+}

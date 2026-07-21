@@ -15,13 +15,21 @@ import (
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/adapters/otc"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/audit"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/events"
+	"github.com/ai-crypto-onramp/exchange-connectors/internal/otel"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/server"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/store"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/store/postgres"
 	"github.com/ai-crypto-onramp/exchange-connectors/internal/venue"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 func main() {
+	shutdown, err := otel.Init("exchange-connectors")
+	if err != nil {
+		log.Fatalf("otel init: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+
 	devMode := os.Getenv("DEV_MODE") == "1"
 	addr := os.Getenv("ADDR")
 	if addr == "" {
@@ -64,7 +72,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: svc.Routes(),
+		Handler: otelhttp.NewHandler(svc.Routes(), "exchange-connectors"),
 	}
 
 	go func() {
